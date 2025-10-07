@@ -5,6 +5,15 @@ import io
 import requests
 import os
 from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip, TextClip, CompositeVideoClip
+import spaces
+
+# Dummy GPU function to satisfy startup requirements
+@spaces.GPU
+def dummy_gpu():
+    return "GPU ready!"
+
+# You can call it once at startup (optional)
+dummy_gpu()
 
 # Pull API key from environment (set in HF Space secrets)
 GROK_API_KEY = os.getenv("GROK_API_KEY")

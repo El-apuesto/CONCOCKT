@@ -4,159 +4,237 @@ from PIL import Image
 import io
 import requests
 import os
-from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip, TextClip, CompositeVideoClip
-import spaces
+import time
+from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip
+import numpy as np
 
-# Dummy GPU function to satisfy startup requirements
-@spaces.GPU
-def dummy_gpu():
-    return "GPU ready!"
+# Get API key from HF Secrets or environment variable
+XAI_API_KEY = os.getenv("XAI_API_KEY")
+if not XAI_API_KEY:
+    raise ValueError("XAI_API_KEY not found! Add it to HF Space secrets.")
 
-# You can call it once at startup (optional)
-dummy_gpu()
-
-# Pull API key from environment (set in HF Space secrets)
-GROK_API_KEY = os.getenv("GROK_API_KEY")
-if not GROK_API_KEY:
-    raise ValueError("GROK_API_KEY missing. Add it to HF Space secrets, you absolute legend.")
-
-XAI_API_URL = "https://api.x.ai/v1/grok"  # Grok text generation endpoint
-
-# Absurdist comedian voice system prompt
-SYSTEM_PROMPT = """
-You are a comedian blending Bill Hicks' cynical truth-telling, George Carlin's language deconstruction, Bo Burnham's meta-humor, Mitch Hedberg's deadpan non-sequiturs, and Kids in the Hall's surreal darkness. Your narration must:
-1. Take the theme and spiral it into absurd, dark, paranoid conclusions with airtight but deranged logic.
-2. Use literal interpretations of phrases (e.g., "birthday party" becomes surviving another year without dying).
-3. Ramble stream-of-consciousness, doubling back with "I mean" and "you know."
-4. Drop casual profanity naturally, not for shock.
-5. Make authority figures (parents, clowns, etc.) complicit in the absurdity.
-6. End with a delayed-realization punchline where the narrator is the butt of the joke.
-7. Keep it 150-200 words for 3-4 scenes.
-Deliver it like you're three whiskeys deep at a dingy bar at 2 AM.
-"""
+def grok_text(prompt, max_tokens=400):
+    """Call Grok API for text"""
+    try:
+        response = requests.post(
+            "https://api.x.ai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {XAI_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "messages": [{"role": "user", "content": prompt}],
+                "model": "grok-beta",
+                "max_tokens": max_tokens,
+                "temperature": 0.8
+            },
+            timeout=60
+        )
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        print(f"Grok error: {e}")
+        return None
 
 def generate_narration(theme):
-    """Generate narration using Grok API."""
-    try:
-        headers = {"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"}
-        payload = {
-            "model": "grok-3",
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Write a vivid, emotional narration about: {theme}"}
-            ],
-            "max_tokens": 512,
-            "temperature": 0.7
-        }
-        response = requests.post(XAI_API_URL, headers=headers, json=payload)
-        if response.status_code == 200:
-            return response.json()["choices"][0]["message"]["content"]
-        else:
-            print(f"API error: {response.status_code}")
-            return "API’s drunk again. Imagine a clown ranting about cake, okay?"
-    except Exception as e:
-        print(f"Narration failed: {e}")
-        return "Tech gods are pissed. Picture a piñata full of regret."
+    """Generate absurdist comedian narration"""
+    system_context = """You're a dark absurdist comedian (Bill Hicks + George Carlin + Bo Burnham). 
+Write 4-5 sentences that:
+- Start mundane, spiral into dark absurdity
+- Use "I mean" and "you know" naturally  
+- Include casual profanity
+- Follow paranoid logic to insane conclusions
+- Deadpan delivery, no apologies
 
-def extract_visual_prompts(narration):
-    """Extract 3 visual prompts from narration."""
-    try:
-        headers = {"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"}
-        payload = {
-            "model": "grok-3",
-            "messages": [
-                {"role": "system", "content": "Extract 3 vivid, photorealistic visual prompts from the narration. Respond with a Python list of strings."},
-                {"role": "user", "content": f"Narration: {narration}"}
-            ],
-            "max_tokens": 256,
-            "temperature": 0.5
-        }
-        response = requests.post(XAI_API_URL, headers=headers, json=payload)
-        if response.status_code == 200:
-            prompts = eval(response.json()["choices"][0]["message"]["content"])
-            return prompts if isinstance(prompts, list) else ["creepy clown at dusk", "overdecorated birthday cake", "abandoned party room"]
-        else:
-            return ["creepy clown at dusk", "overdecorated birthday cake", "abandoned party room"]
-    except:
-        return ["creepy clown at dusk", "overdecorated birthday cake", "abandoned party room"]
+You're three whiskeys deep at 2 AM telling some SHIT."""
 
-def generate_images_grok(prompts):
-    """Placeholder for images (Pexels fallback until Aurora API is public)."""
-    images = []
-    for prompt in prompts:
-        try:
-            response = requests.get(f"https://api.pexels.com/v1/search?query={prompt}&per_page=1", 
-                                   headers={"Authorization": "563492ad6f91700001000001your-pexels-key"})
-            if response.status_code == 200:
-                img_url = response.json()["photos"][0]["src"]["medium"]
-                img_data = requests.get(img_url).content
-                images.append(img_data)
-            else:
-                images.append(None)
-        except:
-            images.append(None)
-    return images
+    prompt = f"""{system_context}
 
-def narration_to_audio(narration, filename="narration.mp3"):
-    """Convert narration to audio."""
+Theme: {theme}
+
+Write the narration now:"""
+    
+    result = grok_text(prompt, max_tokens=300)
+    return result if result else f"So, {theme}, right? I mean, nobody asked for this but here we fucking are."
+
+def get_image_prompts(narration):
+    """Extract visual prompts"""
+    prompt = f"""From this narration, extract 4 SHORT visual prompts (5-7 words each) for image generation.
+
+Narration: {narration}
+
+Format as simple list:
+1. [prompt]
+2. [prompt]  
+3. [prompt]
+4. [prompt]"""
+    
+    result = grok_text(prompt, max_tokens=200)
+    
+    if result:
+        lines = [l.strip() for l in result.split("\n") if l.strip() and not l.strip().startswith("#")]
+        prompts = []
+        for line in lines:
+            # Remove numbering
+            clean = line.split(".", 1)[-1].strip().strip("[]\"'")
+            if clean:
+                prompts.append(clean)
+        if len(prompts) >= 4:
+            return prompts[:4]
+    
+    # Fallback
+    words = narration.split()[:20]
+    return [
+        f"dark cinematic {' '.join(words[0:3])}",
+        f"dramatic {' '.join(words[5:8])}",
+        f"moody {' '.join(words[10:13])}",
+        f"atmospheric {' '.join(words[15:18])}"
+    ]
+
+def create_placeholder_image(text, index):
+    """Create a styled placeholder image"""
+    colors = [
+        (20, 20, 40),   # dark blue
+        (40, 20, 20),   # dark red
+        (20, 40, 20),   # dark green
+        (40, 30, 20),   # dark brown
+    ]
+    img = Image.new('RGB', (1280, 720), color=colors[index % 4])
+    return np.array(img)
+
+def make_audio(text):
+    """Generate TTS audio"""
     try:
-        tts = gTTS(text=narration, lang='en')
+        tts = gTTS(text, lang='en', slow=False)
+        filename = f"audio_{int(time.time())}.mp3"
         tts.save(filename)
         return filename
     except Exception as e:
-        print(f"Voiceover failed: {e}")
+        print(f"Audio error: {e}")
         return None
 
-def generate_script(narration, prompts):
-    """Generate scene-by-scene script."""
-    narration_lines = narration.split(". ")
-    script = "# VIDEO SCRIPT\n\n**Full Narration:**\n" + narration + "\n\n---\n\n## Scene Breakdown:\n"
-    for i, (line, prompt) in enumerate(zip(narration_lines[:3], prompts)):
-        script += f"\n**Scene {i+1}:**\n- Visual: {prompt}\n- Narration: {line}\n"
+def make_video(narration, prompts, audio_path):
+    """Create video from images and audio"""
+    clips = []
+    
+    # Create images
+    for i in range(len(prompts)):
+        img = create_placeholder_image(prompts[i], i)
+        clip = ImageClip(img).set_duration(4)
+        clip = clip.crossfadein(0.5).crossfadeout(0.5)
+        clips.append(clip)
+    
+    final = concatenate_videoclips(clips, method="compose")
+    
+    # Add audio
+    if audio_path and os.path.exists(audio_path):
+        try:
+            from moviepy.editor import AudioFileClip
+            audio = AudioFileClip(audio_path)
+            final = final.set_audio(audio)
+        except Exception as e:
+            print(f"Audio sync error: {e}")
+    
+    output = f"video_{int(time.time())}.mp4"
+    final.write_videofile(output, fps=24, codec='libx264', audio_codec='aac', logger=None)
+    return output
+
+def make_script(narration, prompts):
+    """Format script breakdown"""
+    script = f"""# VIDEO SCRIPT
+
+**FULL NARRATION:**
+{narration}
+
+---
+
+## SCENE BREAKDOWN:
+"""
+    
+    sentences = [s.strip() + "." for s in narration.split(".") if s.strip()]
+    
+    for i, prompt in enumerate(prompts, 1):
+        script += f"\n**Scene {i}:**\n"
+        script += f"Visual: {prompt}\n"
+        if i-1 < len(sentences):
+            script += f"Narration: {sentences[i-1]}\n"
+    
     return script
 
-def render_slideshow(images, audio_path, narration, duration_per_slide=3):
-    """Render slideshow with images, audio, and subtitles."""
-    narration_lines = narration.split(". ")
-    clips = []
-    for i, img_bytes in enumerate(images):
-        if img_bytes:
-            img = Image.open(io.BytesIO(img_bytes))
-            clip = ImageClip(np.array(img)).set_duration(duration_per_slide).resize(width=1280)
-            clip = clip.fadein(0.5).fadeout(0.5)
-            if i < len(narration_lines):
-                subtitle = TextClip(narration_lines[i], fontsize=40, color='white', bg_color='black', size=(1280, 80))
-                subtitle = subtitle.set_duration(duration_per_slide).set_position(('center', 'bottom'))
-                clip = CompositeVideoClip([clip, subtitle])
-            clips.append(clip)
-    final = concatenate_videoclips(clips, method="compose", padding=-1)
-    if audio_path:
-        final = final.set_audio(AudioFileClip(audio_path))
-    final.write_videofile("slideshow.mp4", fps=24)
-    return "slideshow.mp4"
-
 def pipeline(theme):
-    """Main pipeline: narration, images, video, script."""
-    narration = generate_narration(theme)
-    prompts = extract_visual_prompts(narration)
-    images = generate_images_grok(prompts)
-    audio_path = narration_to_audio(narration)
-    video_path = render_slideshow(images, audio_path, narration)
-    script = generate_script(narration, prompts)
-    return narration, script, video_path, audio_path
+    """Main pipeline"""
+    try:
+        # Generate narration
+        narration = generate_narration(theme)
+        if not narration:
+            return "Narration failed", "", None, None
+        
+        # Get visual prompts
+        prompts = get_image_prompts(narration)
+        
+        # Create script
+        script = make_script(narration, prompts)
+        
+        # Generate audio
+        audio_path = make_audio(narration)
+        
+        # Create video
+        video_path = make_video(narration, prompts, audio_path)
+        
+        return narration, script, video_path, audio_path
+        
+    except Exception as e:
+        return f"Error: {str(e)}", "", None, None
 
-# Gradio interface
-iface = gr.Interface(
-    fn=pipeline,
-    inputs=gr.Textbox(label="Theme", placeholder="e.g., childhood birthday parties"),
-    outputs=[
-        gr.Textbox(label="Narration"),
-        gr.Textbox(label="Script"),
-        gr.Video(label="Slideshow Preview"),
-        gr.File(label="Download Narration Audio")
-    ],
-    title="Concockt: Narration to Animation",
-    description="Enter a theme for absurdist, dark-comedy narration and video."
-)
+# Gradio UI with better styling
+with gr.Blocks(theme=gr.themes.Monochrome(), css="""
+    .gradio-container {
+        font-family: 'Courier New', monospace !important;
+    }
+    h1 {
+        color: #ff4444 !important;
+        text-align: center;
+        font-weight: bold;
+    }
+""") as demo:
+    
+    gr.Markdown("""
+    # 🎬 CONCOCKT
+    ### Absurdist AI Narration → Dark Comedy Video
+    
+    *Powered by Grok. Three whiskeys deep.*
+    """)
+    
+    with gr.Row():
+        theme_input = gr.Textbox(
+            label="Enter Theme",
+            placeholder="childhood birthday parties, gym memberships, motivational speakers...",
+            lines=2,
+            scale=4
+        )
+    
+    generate_btn = gr.Button("🔥 GENERATE", variant="primary", size="lg")
+    
+    with gr.Row():
+        with gr.Column():
+            narration_out = gr.Textbox(label="Generated Narration", lines=8)
+            script_out = gr.Textbox(label="Scene Breakdown", lines=12)
+        
+        with gr.Column():
+            video_out = gr.Video(label="Video Output")
+            audio_out = gr.Audio(label="Voiceover Audio")
+    
+    gr.Markdown("""
+    ---
+    **NOTE:** Currently using placeholder images (colored frames) until Grok Aurora API is publicly available.
+    The narration and audio are fully functional with Grok AI.
+    """)
+    
+    generate_btn.click(
+        fn=pipeline,
+        inputs=[theme_input],
+        outputs=[narration_out, script_out, video_out, audio_out]
+    )
 
 if __name__ == "__main__":
+    demo.launch()

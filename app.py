@@ -435,6 +435,7 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css="""
     ### Setup:
     Add to HF Space Secrets:
     - `XAI_API_KEY` - Your Grok API key
+    - `HF_TOKEN` - Your Hugging Face token (for downloading SDXL model)
     
     ### Hardware:
     Make sure your Space is set to **ZeroGPU** in Settings → Hardware
@@ -447,4 +448,4 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css="""
     )
 
 if __name__ == "__main__":
-    demo.launch(share=True)
+    demo.launch()

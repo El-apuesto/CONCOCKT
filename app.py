@@ -13,9 +13,12 @@ import torch
 
 # API Keys from environment
 XAI_API_KEY = os.getenv("XAI_API_KEY")
+HF_TOKEN = os.getenv("HF_TOKEN")
 
 if not XAI_API_KEY:
     raise ValueError("XAI_API_KEY not found! Add it to environment/secrets.")
+if not HF_TOKEN:
+    raise ValueError("HF_TOKEN not found! Add it to environment/secrets.")
 
 # Load Stable Diffusion XL model
 print("Loading Stable Diffusion XL model...")
@@ -23,7 +26,8 @@ pipe = StableDiffusionXLPipeline.from_pretrained(
     "stabilityai/stable-diffusion-xl-base-1.0",
     torch_dtype=torch.float16,
     use_safetensors=True,
-    variant="fp16"
+    variant="fp16",
+    token=HF_TOKEN
 )
 
 def grok_text(prompt, max_tokens=400):

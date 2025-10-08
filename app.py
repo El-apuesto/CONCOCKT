@@ -8,14 +8,14 @@ import time
 from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip, CompositeVideoClip, TextClip
 import numpy as np
 
-# API Keys from environment
+# API Keys from environment - FIXED
 XAI_API_KEY = os.getenv("XAI_API_KEY")
-HF_TOKEN = os.getenv("HF_TOKEN")  # HuggingFace token for Stable Diffusion
+STABILITY_API_KEY = os.getenv("STABILITY_API_KEY")
 
 if not XAI_API_KEY:
     raise ValueError("XAI_API_KEY not found! Add it to environment/secrets.")
-if not HF_TOKEN:
-    raise ValueError("HF_TOKEN not found! Add it to environment/secrets.")
+if not STABILITY_API_KEY:
+    raise ValueError("STABILITY_API_KEY not found! Add it to environment/secrets.")
 
 def grok_text(prompt, max_tokens=400):
     """Call Grok for text generation"""

@@ -7,15 +7,24 @@ import os
 import time
 from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip, CompositeVideoClip, TextClip
 import numpy as np
+import spaces
+from diffusers import StableDiffusionXLPipeline
+import torch
 
-# API Keys from environment - FIXED
+# API Keys from environment
 XAI_API_KEY = os.getenv("XAI_API_KEY")
-STABILITY_API_KEY = os.getenv("STABILITY_API_KEY")
 
 if not XAI_API_KEY:
     raise ValueError("XAI_API_KEY not found! Add it to environment/secrets.")
-if not STABILITY_API_KEY:
-    raise ValueError("STABILITY_API_KEY not found! Add it to environment/secrets.")
+
+# Load Stable Diffusion XL model
+print("Loading Stable Diffusion XL model...")
+pipe = StableDiffusionXLPipeline.from_pretrained(
+    "stabilityai/stable-diffusion-xl-base-1.0",
+    torch_dtype=torch.float16,
+    use_safetensors=True,
+    variant="fp16"
+)
 
 def grok_text(prompt, max_tokens=400):
     """Call Grok for text generation"""
@@ -100,36 +109,28 @@ Format as numbered list:
         for i in range(0, min(len(words), num_scenes*5), max(len(words)//num_scenes, 5))
     ][:num_scenes]
 
-def generate_image_stability(prompt):
-    """Generate image using Stability AI"""
+@spaces.GPU
+def generate_image_sdxl(prompt):
+    """Generate image using Stable Diffusion XL on Hugging Face GPU"""
     try:
-        response = requests.post(
-            "https://api.stability.ai/v2beta/stable-image/generate/ultra",
-            headers={
-                "Authorization": f"Bearer {STABILITY_API_KEY}",
-                "Accept": "image/*"
-            },
-            files={"none": ''},
-            data={
-                "prompt": prompt,
-                "output_format": "png",
-                "aspect_ratio": "16:9"
-            },
-            timeout=90
-        )
+        # Generate image
+        image = pipe(
+            prompt=prompt,
+            negative_prompt="ugly, blurry, low quality, distorted, deformed",
+            num_inference_steps=30,
+            guidance_scale=7.5,
+            width=1024,
+            height=576  # 16:9 aspect ratio
+        ).images[0]
         
-        if response.status_code == 200:
-            return Image.open(io.BytesIO(response.content))
-        else:
-            print(f"Stability error {response.status_code}: {response.text}")
-            return create_fallback_image(prompt)
-            
+        return image
+        
     except Exception as e:
         print(f"Image generation error: {e}")
         return create_fallback_image(prompt)
 
 def create_fallback_image(text):
-    """Create fallback image if API fails"""
+    """Create fallback image if generation fails"""
     img = Image.new('RGB', (1280, 720), color=(20, 20, 30))
     return img
 
@@ -159,7 +160,7 @@ def apply_ken_burns(clip, zoom_direction="in"):
     
     return clip.resize(zoom_effect).set_position(pan_effect)
 
-def make_video(narration, images, audio_path, duration_per_scene=5, aspect_ratio="both"):
+def make_video(narration, images, audio_path, duration_per_scene=5):
     """Create cinematic video with Ken Burns effects - supports 16:9 and 9:16"""
     clips_16_9 = []
     clips_9_16 = []
@@ -179,9 +180,8 @@ def make_video(narration, images, audio_path, duration_per_scene=5, aspect_ratio
             clip_landscape = clip_landscape.crossfadein(0.8).crossfadeout(0.8)
             
             # Create 9:16 clip (center crop for portrait)
-            # Crop center portion for vertical video
             h, w = img_array.shape[:2]
-            crop_width = int(h * 9 / 16)  # Calculate width for 9:16 from height
+            crop_width = int(h * 9 / 16)
             x_center = w // 2
             x1 = max(0, x_center - crop_width // 2)
             x2 = min(w, x_center + crop_width // 2)
@@ -212,7 +212,7 @@ def make_video(narration, images, audio_path, duration_per_scene=5, aspect_ratio
                     )
                     txt_landscape = (txt_landscape
                                     .set_duration(duration_per_scene)
-                                    .set_position(('center', 600))
+                                    .set_position(('center', 480))
                                     .crossfadein(0.5)
                                     .crossfadeout(0.5))
                     
@@ -232,7 +232,7 @@ def make_video(narration, images, audio_path, duration_per_scene=5, aspect_ratio
                     )
                     txt_portrait = (txt_portrait
                                    .set_duration(duration_per_scene)
-                                   .set_position(('center', 1100))
+                                   .set_position(('center', 900))
                                    .crossfadein(0.5)
                                    .crossfadeout(0.5))
                     
@@ -328,13 +328,12 @@ def pipeline(theme, num_scenes=4, seconds_per_scene=5, progress=gr.Progress()):
         progress(0.2, desc="Extracting visual prompts...")
         prompts = get_visual_prompts(narration, num_scenes)
         
-        # Step 3: Generate images
+        # Step 3: Generate images with SDXL
         images = []
         for i, prompt in enumerate(prompts):
-            progress(0.3 + (i / num_scenes) * 0.4, desc=f"Generating image {i+1}/{num_scenes}...")
-            img = generate_image_stability(prompt)
+            progress(0.3 + (i / num_scenes) * 0.4, desc=f"Generating image {i+1}/{num_scenes} with SDXL...")
+            img = generate_image_sdxl(prompt)
             images.append(img)
-            time.sleep(0.5)  # Rate limiting
         
         # Step 4: Create script
         progress(0.75, desc="Formatting script...")
@@ -376,7 +375,7 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css="""
     # 🎬 CONCOCKT
     ### Absurdist AI Narration → Cinematic Dark Comedy
     
-    *Powered by Grok + Stability AI. Three whiskeys deep.*
+    *Powered by Grok + Stable Diffusion XL on Hugging Face GPU*
     """)
     
     with gr.Row():
@@ -423,19 +422,18 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css="""
     ### Features:
     - **Dual aspect ratios**: Get BOTH 16:9 (desktop/YouTube) and 9:16 (TikTok/Reels) from one generation
     - **Absurdist narration** via Grok (dark comedian voice)
-    - **Cinematic images** via Stability AI (unrestricted)
+    - **Cinematic images** via Stable Diffusion XL (FREE on HF GPU!)
     - **Ken Burns effects** (zoom + pan on each scene)
     - **Crossfade transitions** between scenes
     - **Subtitle overlays** adapted for each format
     - **Professional audio sync** on both versions
     
     ### Setup:
-    Add to HF Space Secrets or environment:
+    Add to HF Space Secrets:
     - `XAI_API_KEY` - Your Grok API key
-    - `STABILITY_API_KEY` - Your Stability AI key (get $5 free at platform.stability.ai)
     
-    ### Pro Tip:
-    The 9:16 video is center-cropped from the 16:9 - same content, optimized for vertical viewing!
+    ### Hardware:
+    Make sure your Space is set to **ZeroGPU** in Settings → Hardware
     """)
     
     generate_btn.click(
@@ -445,4 +443,4 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css="""
     )
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(share=True)

@@ -1,4 +1,5 @@
-import gradio as gr
+
+    import gradio as gr
 from gtts import gTTS
 from PIL import Image
 import io
@@ -454,4 +455,3 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css="""
     )
 
 if __name__ == "__main__":
-    demo.launch()

@@ -1,7 +1,16 @@
-gradio
-gtts
-pillow
-moviepy
-requests
-numpy
-imageio-ffmpeg
+{
+  "name": "konkokt",
+  "version": "1.0.0",
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "lucide-react": "^0.263.1"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build"
+  },
+  "devDependencies": {
+    "react-scripts": "5.0.1"
+  }
+}

@@ -1,461 +1,331 @@
-import gradio as gr
-from gtts import gTTS
-from PIL import Image
-import io
-import requests
-import os
-import time
-from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip, CompositeVideoClip, TextClip
-import numpy as np
-import spaces
-from diffusers import StableDiffusionXLPipeline
-import torch
+import React, { useState, useRef } from 'react';
+import { Download, Loader } from 'lucide-react';
 
-# API Keys from environment
-XAI_API_KEY = os.getenv("XAI_API_KEY")
-HF_TOKEN = os.getenv("HF_TOKEN")
+export default function Konkokt() {
+  const [scriptInput, setScriptInput] = useState('');
+  const [aspectRatio, setAspectRatio] = useState('both');
+  const [generating, setGenerating] = useState(false);
+  const [progress, setProgress] = useState('');
+  const [scenes, setScenes] = useState([]);
+  const [videoBlobs, setVideoBlobs] = useState({ wide: null, tall: null });
+  
+  const canvasRef = useRef(null);
 
-if not XAI_API_KEY:
-    raise ValueError("XAI_API_KEY not found! Add it to environment/secrets.")
-if not HF_TOKEN:
-    raise ValueError("HF_TOKEN not found! Add it to environment/secrets.")
-
-# Global variable for lazy loading
-pipe = None
-
-def load_model():
-    """Lazy load the model only when needed"""
-    global pipe
-    if pipe is None:
-        print("🔄 Loading Stable Diffusion XL model...")
-        pipe = StableDiffusionXLPipeline.from_pretrained(
-            "stabilityai/stable-diffusion-xl-base-1.0",
-            torch_dtype=torch.float16,
-            use_safetensors=True,
-            variant="fp16",
-            token=HF_TOKEN
-        )
-        print("✅ Model loaded!")
-    return pipe
-
-def grok_text(prompt, max_tokens=400):
-    """Call Grok for text generation"""
-    try:
-        response = requests.post(
-            "https://api.x.ai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {XAI_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "messages": [{"role": "user", "content": prompt}],
-                "model": "grok-beta",
-                "max_tokens": max_tokens,
-                "temperature": 0.8
-            },
-            timeout=60
-        )
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        print(f"Grok error: {e}")
-        return None
-
-def generate_narration(theme):
-    """Generate absurdist comedian narration"""
-    system_context = """You're a dark absurdist comedian (Bill Hicks + George Carlin + Bo Burnham style).
-
-Write 4-5 sentences that:
-- Start mundane, spiral into dark absurdity through paranoid logic
-- Use "I mean" and "you know" naturally
-- Include casual profanity (naturally, not forced)
-- Follow airtight but deranged internal logic
-- Deadpan delivery, no apologies
-- Make authority figures complicit in the absurdity
-
-You're three whiskeys deep at 2 AM at a dingy bar."""
-
-    prompt = f"""{system_context}
-
-Theme: {theme}
-
-Write the narration:"""
+  const breakIntoScenes = (text) => {
+    const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+    const scenes = [];
+    let currentScene = '';
     
-    result = grok_text(prompt, max_tokens=350)
-    return result if result else f"So, {theme}, right? I mean, nobody asked for this but here we fucking are, and somehow we're all complicit."
-
-def get_visual_prompts(narration, num_scenes=4):
-    """Extract visual prompts from narration"""
-    prompt = f"""From this narration, extract {num_scenes} visual prompts for dark, cinematic image generation.
-
-Narration: {narration}
-
-Each prompt should be:
-- 8-12 words
-- Photorealistic, cinematic
-- Include lighting/mood (dramatic, moody, dark, atmospheric)
-- Match the absurdist/dark tone
-
-Format as numbered list:
-1. prompt here
-2. prompt here
-3. prompt here
-4. prompt here"""
+    sentences.forEach(sentence => {
+      currentScene += sentence;
+      const wordCount = currentScene.split(' ').length;
+      
+      if (wordCount >= 15 || sentence === sentences[sentences.length - 1]) {
+        scenes.push(currentScene.trim());
+        currentScene = '';
+      }
+    });
     
-    result = grok_text(prompt, max_tokens=250)
-    
-    if result:
-        lines = [l.strip() for l in result.split("\n") if l.strip()]
-        prompts = []
-        for line in lines:
-            clean = line.split(".", 1)[-1].strip().strip("[]\"'-")
-            if clean and len(clean) > 10:
-                prompts.append(clean)
-        if len(prompts) >= num_scenes:
-            return prompts[:num_scenes]
-    
-    # Fallback prompts
-    words = narration.split()
-    return [
-        f"dark cinematic scene, {' '.join(words[i:i+4])}, moody lighting, photorealistic"
-        for i in range(0, min(len(words), num_scenes*5), max(len(words)//num_scenes, 5))
-    ][:num_scenes]
+    return scenes.length > 0 ? scenes : [text];
+  };
 
-@spaces.GPU
-def generate_image_sdxl(prompt):
-    """Generate image using Stable Diffusion XL on Hugging Face GPU"""
-    try:
-        # Load model if not already loaded
-        model = load_model()
-        
-        # Move to GPU (ZeroGPU handles this automatically)
-        image = model(
-            prompt=prompt,
-            negative_prompt="ugly, blurry, low quality, distorted, deformed",
-            num_inference_steps=30,
-            guidance_scale=7.5,
-            width=1024,
-            height=576  # 16:9 aspect ratio
-        ).images[0]
-        
-        return image
-        
-    except Exception as e:
-        print(f"Image generation error: {e}")
-        return create_fallback_image(prompt)
+  const generatePromptFromScript = (sceneText) => {
+    const words = sceneText.split(' ').slice(0, 10).join(' ');
+    return `cinematic scene: ${words}`;
+  };
 
-def create_fallback_image(text):
-    """Create fallback image if generation fails"""
-    img = Image.new('RGB', (1280, 720), color=(20, 20, 30))
-    return img
+  const generateImage = async (prompt) => {
+    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true`;
+    
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve({ url, img });
+      img.onerror = () => reject(new Error('Image generation failed'));
+      img.src = url;
+    });
+  };
 
-def make_audio(text):
-    """Generate voiceover audio"""
-    try:
-        tts = gTTS(text, lang='en', slow=False)
-        filename = f"audio_{int(time.time())}.mp3"
-        tts.save(filename)
-        return filename
-    except Exception as e:
-        print(f"Audio error: {e}")
-        return None
+  const speak = (text, voiceType) => {
+    return new Promise((resolve) => {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.9;
+      const voices = speechSynthesis.getVoices();
+      
+      if (voiceType === 'female') {
+        utterance.voice = voices.find(v => v.name.includes('Female') || v.name.includes('Samantha')) || voices[0];
+      } else {
+        utterance.voice = voices.find(v => v.name.includes('Male') || v.name.includes('Daniel')) || voices[0];
+      }
+      
+      utterance.onend = resolve;
+      speechSynthesis.speak(utterance);
+    });
+  };
 
-def apply_ken_burns(clip, zoom_direction="in"):
-    """Apply Ken Burns pan and zoom effect"""
-    duration = clip.duration
+  const drawKenBurns = (canvas, img, progress, aspectRatio = 'square') => {
+    const ctx = canvas.getContext('2d');
     
-    if zoom_direction == "in":
-        zoom_effect = lambda t: 1 + 0.3 * (t / duration)
-        pan_effect = lambda t: ('center', int(50 * (t / duration)))
-    else:
-        zoom_effect = lambda t: 1.3 - 0.3 * (t / duration)
-        pan_effect = lambda t: ('center', int(50 - 50 * (t / duration)))
-    
-    return clip.resize(zoom_effect).set_position(pan_effect)
-
-def make_video(narration, images, audio_path, duration_per_scene=5):
-    """Create cinematic video with Ken Burns effects - supports 16:9 and 9:16"""
-    clips_16_9 = []
-    clips_9_16 = []
-    sentences = [s.strip() + "." for s in narration.split(".") if s.strip()]
-    
-    for i, img in enumerate(images):
-        try:
-            # Convert PIL to numpy
-            if isinstance(img, Image.Image):
-                img_array = np.array(img)
-            else:
-                img_array = img
-            
-            # Create 16:9 clip (full landscape)
-            clip_landscape = ImageClip(img_array).set_duration(duration_per_scene)
-            clip_landscape = apply_ken_burns(clip_landscape, "in" if i % 2 == 0 else "out")
-            clip_landscape = clip_landscape.crossfadein(0.8).crossfadeout(0.8)
-            
-            # Create 9:16 clip (center crop for portrait)
-            h, w = img_array.shape[:2]
-            crop_width = int(h * 9 / 16)
-            x_center = w // 2
-            x1 = max(0, x_center - crop_width // 2)
-            x2 = min(w, x_center + crop_width // 2)
-            
-            img_portrait = img_array[:, x1:x2]
-            clip_portrait = ImageClip(img_portrait).set_duration(duration_per_scene)
-            clip_portrait = apply_ken_burns(clip_portrait, "in" if i % 2 == 0 else "out")
-            clip_portrait = clip_portrait.crossfadein(0.8).crossfadeout(0.8)
-            
-            # Add subtitles to both versions
-            if i < len(sentences):
-                subtitle_text = sentences[i]
-                if len(subtitle_text) > 100:
-                    subtitle_text = subtitle_text[:97] + "..."
-                
-                try:
-                    # Landscape subtitle
-                    txt_landscape = TextClip(
-                        subtitle_text,
-                        fontsize=38,
-                        color='white',
-                        font='Arial-Bold',
-                        stroke_color='black',
-                        stroke_width=2,
-                        method='caption',
-                        size=(1100, None),
-                        align='center'
-                    )
-                    txt_landscape = (txt_landscape
-                                    .set_duration(duration_per_scene)
-                                    .set_position(('center', 480))
-                                    .crossfadein(0.5)
-                                    .crossfadeout(0.5))
-                    
-                    clip_landscape = CompositeVideoClip([clip_landscape, txt_landscape])
-                    
-                    # Portrait subtitle (narrower)
-                    txt_portrait = TextClip(
-                        subtitle_text,
-                        fontsize=32,
-                        color='white',
-                        font='Arial-Bold',
-                        stroke_color='black',
-                        stroke_width=2,
-                        method='caption',
-                        size=(650, None),
-                        align='center'
-                    )
-                    txt_portrait = (txt_portrait
-                                   .set_duration(duration_per_scene)
-                                   .set_position(('center', 900))
-                                   .crossfadein(0.5)
-                                   .crossfadeout(0.5))
-                    
-                    clip_portrait = CompositeVideoClip([clip_portrait, txt_portrait])
-                    
-                except Exception as e:
-                    print(f"Subtitle error: {e}")
-            
-            clips_16_9.append(clip_landscape)
-            clips_9_16.append(clip_portrait)
-            
-        except Exception as e:
-            print(f"Clip error: {e}")
-            continue
-    
-    if not clips_16_9:
-        return None, None
-    
-    # Concatenate both versions
-    final_16_9 = concatenate_videoclips(clips_16_9, method="compose")
-    final_9_16 = concatenate_videoclips(clips_9_16, method="compose")
-    
-    # Add audio to both
-    if audio_path and os.path.exists(audio_path):
-        try:
-            audio = AudioFileClip(audio_path)
-            final_16_9 = final_16_9.set_audio(audio)
-            final_9_16 = final_9_16.set_audio(audio.copy())
-        except Exception as e:
-            print(f"Audio sync error: {e}")
-    
-    # Render both videos
-    timestamp = int(time.time())
-    output_16_9 = f"video_16x9_{timestamp}.mp4"
-    output_9_16 = f"video_9x16_{timestamp}.mp4"
-    
-    final_16_9.write_videofile(
-        output_16_9,
-        fps=30,
-        codec='libx264',
-        audio_codec='aac',
-        temp_audiofile=f'temp-audio-16-9-{timestamp}.m4a',
-        remove_temp=True,
-        logger=None
-    )
-    
-    final_9_16.write_videofile(
-        output_9_16,
-        fps=30,
-        codec='libx264',
-        audio_codec='aac',
-        temp_audiofile=f'temp-audio-9-16-{timestamp}.m4a',
-        remove_temp=True,
-        logger=None
-    )
-    
-    return output_16_9, output_9_16
-
-def make_script(narration, prompts):
-    """Generate formatted script"""
-    script = f"""# VIDEO SCRIPT
-
-**FULL NARRATION:**
-{narration}
-
----
-
-## SCENE BREAKDOWN:
-
-"""
-    
-    sentences = [s.strip() + "." for s in narration.split(".") if s.strip()]
-    
-    for i, prompt in enumerate(prompts, 1):
-        script += f"**Scene {i}:**\n"
-        script += f"- Visual: {prompt}\n"
-        if i-1 < len(sentences):
-            script += f"- Narration: {sentences[i-1]}\n"
-        script += f"- Effect: {'Ken Burns zoom in + pan' if i % 2 == 1 else 'Ken Burns zoom out + pan'}\n\n"
-    
-    return script
-
-def pipeline(theme, num_scenes=4, seconds_per_scene=5, progress=gr.Progress()):
-    """Main pipeline with progress tracking - generates BOTH aspect ratios"""
-    try:
-        # Step 1: Generate narration
-        progress(0.1, desc="🎤 Generating narration with Grok...")
-        narration = generate_narration(theme)
-        if not narration:
-            return "Narration generation failed", "", None, None, None
-        
-        # Step 2: Extract visual prompts
-        progress(0.2, desc="🎬 Extracting visual prompts...")
-        prompts = get_visual_prompts(narration, num_scenes)
-        
-        # Step 3: Generate images with SDXL
-        images = []
-        for i, prompt in enumerate(prompts):
-            progress(0.3 + (i / num_scenes) * 0.4, desc=f"🎨 Generating image {i+1}/{num_scenes} with SDXL...")
-            img = generate_image_sdxl(prompt)
-            images.append(img)
-        
-        # Step 4: Create script
-        progress(0.75, desc="📝 Formatting script...")
-        script = make_script(narration, prompts)
-        
-        # Step 5: Generate audio
-        progress(0.8, desc="🔊 Creating voiceover...")
-        audio_path = make_audio(narration)
-        
-        # Step 6: Render BOTH videos (16:9 and 9:16)
-        progress(0.85, desc="🎥 Rendering videos (landscape + portrait)...")
-        video_16_9, video_9_16 = make_video(narration, images, audio_path, seconds_per_scene)
-        
-        progress(1.0, desc="✅ Complete!")
-        
-        return narration, script, video_16_9, video_9_16, audio_path
-        
-    except Exception as e:
-        return f"Error: {str(e)}", "", None, None, None
-
-# Gradio Interface
-with gr.Blocks(theme=gr.themes.Monochrome(), css="""
-    .gradio-container {
-        font-family: 'Courier New', monospace !important;
+    if (aspectRatio === '16:9') {
+      canvas.width = 1920;
+      canvas.height = 1080;
+    } else if (aspectRatio === '9:16') {
+      canvas.width = 1080;
+      canvas.height = 1920;
+    } else {
+      canvas.width = 1024;
+      canvas.height = 1024;
     }
-    h1 {
-        color: #ff4444 !important;
-        text-align: center;
-        font-weight: bold;
-        font-size: 3em !important;
-    }
-    .generate-btn {
-        background: #ff4444 !important;
-        font-size: 1.2em !important;
-        font-weight: bold !important;
-    }
-""") as demo:
-    
-    gr.Markdown("""
-    # 🎬 CONCOCKT
-    ### Absurdist AI Narration → Cinematic Dark Comedy
-    
-    *Powered by Grok + Stable Diffusion XL on Hugging Face GPU*
-    """)
-    
-    with gr.Row():
-        with gr.Column(scale=3):
-            theme_input = gr.Textbox(
-                label="Theme",
-                placeholder="childhood birthday parties, gym memberships, motivational speakers, wedding traditions...",
-                lines=2
-            )
-        
-        with gr.Column(scale=1):
-            num_scenes = gr.Slider(
-                label="Number of Scenes",
-                minimum=3,
-                maximum=6,
-                value=4,
-                step=1
-            )
-            duration = gr.Slider(
-                label="Seconds per Scene",
-                minimum=3,
-                maximum=8,
-                value=5,
-                step=1
-            )
-    
-    generate_btn = gr.Button("🔥 GENERATE VIDEO", variant="primary", size="lg", elem_classes="generate-btn")
-    
-    with gr.Row():
-        with gr.Column():
-            narration_out = gr.Textbox(label="Generated Narration", lines=8)
-            script_out = gr.Textbox(label="Scene-by-Scene Script", lines=12)
-            audio_out = gr.Audio(label="Voiceover Audio")
-        
-        with gr.Column():
-            gr.Markdown("### 🖥️ Desktop / YouTube (16:9)")
-            video_16_9_out = gr.Video(label="Landscape Video")
-            
-            gr.Markdown("### 📱 TikTok / Reels / Shorts (9:16)")
-            video_9_16_out = gr.Video(label="Portrait Video")
-    
-    gr.Markdown("""
-    ---
-    ### Features:
-    - **Dual aspect ratios**: Get BOTH 16:9 (desktop/YouTube) and 9:16 (TikTok/Reels) from one generation
-    - **Absurdist narration** via Grok (dark comedian voice)
-    - **Cinematic images** via Stable Diffusion XL (FREE on HF GPU!)
-    - **Ken Burns effects** (zoom + pan on each scene)
-    - **Crossfade transitions** between scenes
-    - **Subtitle overlays** adapted for each format
-    - **Professional audio sync** on both versions
-    
-    ### Setup:
-    Add to HF Space Secrets:
-    - `XAI_API_KEY` - Your Grok API key
-    - `HF_TOKEN` - Your Hugging Face token
-    
-    ### Hardware:
-    Make sure your Space is set to **ZeroGPU** in Settings → Hardware
-    """)
-    
-    generate_btn.click(
-        fn=pipeline,
-        inputs=[theme_input, num_scenes, duration],
-        outputs=[narration_out, script_out, video_16_9_out, video_9_16_out, audio_out]
-    )
 
-if __name__ == "__main__":
-    demo.launch()
+    const scale = 1 + (progress * 0.2);
+    const offsetX = -progress * 50;
+    const offsetY = -progress * 30;
+
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.scale(scale, scale);
+    
+    const imgAspect = img.width / img.height;
+    const canvasAspect = canvas.width / canvas.height;
+    let drawWidth, drawHeight;
+    
+    if (imgAspect > canvasAspect) {
+      drawHeight = canvas.height;
+      drawWidth = drawHeight * imgAspect;
+    } else {
+      drawWidth = canvas.width;
+      drawHeight = drawWidth / imgAspect;
+    }
+    
+    ctx.translate(offsetX, offsetY);
+    ctx.drawImage(img, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+    ctx.restore();
+  };
+
+  const recordVideo = async (scenes, aspectRatio) => {
+    const canvas = canvasRef.current;
+    const stream = canvas.captureStream(30);
+    const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+    
+    const chunks = [];
+    mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+    
+    return new Promise(async (resolve) => {
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        resolve(blob);
+      };
+
+      mediaRecorder.start();
+
+      for (let i = 0; i < scenes.length; i++) {
+        const scene = scenes[i];
+        const duration = Math.max(4, Math.min(8, scene.script.split(' ').length * 0.3));
+        
+        const startTime = Date.now();
+        const endTime = startTime + (duration * 1000);
+        
+        const animate = () => {
+          const elapsed = (Date.now() - startTime) / 1000;
+          const progress = Math.min(elapsed / duration, 1);
+          
+          drawKenBurns(canvas, scene.img, progress, aspectRatio);
+          
+          if (Date.now() < endTime) {
+            requestAnimationFrame(animate);
+          }
+        };
+        
+        animate();
+        await speak(scene.script, scene.voice);
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+
+      mediaRecorder.stop();
+    });
+  };
+
+  const generateStory = async () => {
+    if (!scriptInput.trim()) {
+      alert('Enter a script or topic');
+      return;
+    }
+
+    setGenerating(true);
+    setProgress('Breaking script into scenes...');
+    setVideoBlobs({ wide: null, tall: null });
+
+    try {
+      const sceneTexts = breakIntoScenes(scriptInput);
+      setProgress(`Generating ${sceneTexts.length} images...`);
+
+      const generatedScenes = [];
+      for (let i = 0; i < sceneTexts.length; i++) {
+        setProgress(`Generating image ${i + 1}/${sceneTexts.length}...`);
+        const prompt = generatePromptFromScript(sceneTexts[i]);
+        const { url, img } = await generateImage(prompt);
+        
+        generatedScenes.push({
+          script: sceneTexts[i],
+          imageUrl: url,
+          img: img,
+          voice: i % 2 === 0 ? 'male' : 'female'
+        });
+      }
+
+      setScenes(generatedScenes);
+      setProgress('Creating videos...');
+
+      const videos = {};
+      
+      if (aspectRatio === '16:9' || aspectRatio === 'both') {
+        setProgress('Recording 16:9 video...');
+        videos.wide = await recordVideo(generatedScenes, '16:9');
+      }
+      
+      if (aspectRatio === '9:16' || aspectRatio === 'both') {
+        setProgress('Recording 9:16 video...');
+        videos.tall = await recordVideo(generatedScenes, '9:16');
+      }
+
+      setVideoBlobs(videos);
+      setProgress('Done! Download your video(s).');
+      setGenerating(false);
+
+    } catch (error) {
+      alert('Error: ' + error.message);
+      setGenerating(false);
+      setProgress('');
+    }
+  };
+
+  const downloadVideo = (blob, format) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `konkokt-${format}.webm`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-900 text-white p-6">
+      <div className="max-w-4xl mx-auto">
+        <h1 className="text-4xl font-bold mb-8 text-center">KONKOKT</h1>
+
+        <div className="bg-gray-800 p-6 rounded-lg mb-6">
+          <label className="block mb-2 font-semibold">Script or Topic:</label>
+          <textarea
+            value={scriptInput}
+            onChange={(e) => setScriptInput(e.target.value)}
+            placeholder="Paste your full script here, or just type a topic like 'a dragon's adventure'..."
+            className="w-full h-40 p-4 bg-gray-700 rounded text-white resize-none"
+            disabled={generating}
+          />
+        </div>
+
+        <div className="bg-gray-800 p-6 rounded-lg mb-6">
+          <label className="block mb-3 font-semibold">Output Format:</label>
+          <div className="flex gap-4">
+            <label className="flex items-center cursor-pointer">
+              <input
+                type="radio"
+                value="16:9"
+                checked={aspectRatio === '16:9'}
+                onChange={(e) => setAspectRatio(e.target.value)}
+                disabled={generating}
+                className="mr-2"
+              />
+              <span>16:9 (Desktop)</span>
+            </label>
+            <label className="flex items-center cursor-pointer">
+              <input
+                type="radio"
+                value="9:16"
+                checked={aspectRatio === '9:16'}
+                onChange={(e) => setAspectRatio(e.target.value)}
+                disabled={generating}
+                className="mr-2"
+              />
+              <span>9:16 (Mobile)</span>
+            </label>
+            <label className="flex items-center cursor-pointer">
+              <input
+                type="radio"
+                value="both"
+                checked={aspectRatio === 'both'}
+                onChange={(e) => setAspectRatio(e.target.value)}
+                disabled={generating}
+                className="mr-2"
+              />
+              <span>Both</span>
+            </label>
+          </div>
+        </div>
+
+        <button
+          onClick={generateStory}
+          disabled={generating}
+          className="w-full p-4 bg-green-600 hover:bg-green-700 rounded-lg font-bold text-lg disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        >
+          {generating ? (
+            <>
+              <Loader className="animate-spin" size={24} />
+              Generating...
+            </>
+          ) : (
+            'Generate'
+          )}
+        </button>
+
+        {progress && (
+          <div className="mt-6 p-4 bg-blue-900 rounded-lg text-center">
+            <p className="text-lg">{progress}</p>
+          </div>
+        )}
+
+        {(videoBlobs.wide || videoBlobs.tall) && (
+          <div className="mt-6 bg-gray-800 p-6 rounded-lg">
+            <h2 className="text-2xl font-bold mb-4">Download Your Videos:</h2>
+            <div className="flex gap-4">
+              {videoBlobs.wide && (
+                <button
+                  onClick={() => downloadVideo(videoBlobs.wide, '16-9')}
+                  className="flex-1 p-4 bg-blue-600 hover:bg-blue-700 rounded-lg flex items-center justify-center gap-2"
+                >
+                  <Download size={20} />
+                  16:9 Desktop
+                </button>
+              )}
+              {videoBlobs.tall && (
+                <button
+                  onClick={() => downloadVideo(videoBlobs.tall, '9-16')}
+                  className="flex-1 p-4 bg-purple-600 hover:bg-purple-700 rounded-lg flex items-center justify-center gap-2"
+                >
+                  <Download size={20} />
+                  9:16 Mobile
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {scenes.length > 0 && (
+          <div className="mt-6 bg-gray-800 p-6 rounded-lg">
+            <h2 className="text-xl font-bold mb-4">Generated Scenes:</h2>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {scenes.map((scene, i) => (
+                <div key={i} className="bg-gray-700 p-2 rounded">
+                  <img src={scene.imageUrl} alt={`Scene ${i + 1}`} className="w-full rounded mb-2" />
+                  <p className="text-xs">{scene.script.substring(0, 50)}...</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <canvas ref={canvasRef} className="hidden" />
+      </div>
+    </div>
+  );
+}

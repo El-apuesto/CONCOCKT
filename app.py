@@ -20,15 +20,8 @@ if not XAI_API_KEY:
 if not HF_TOKEN:
     raise ValueError("HF_TOKEN not found! Add it to environment/secrets.")
 
-# Load Stable Diffusion XL model
-print("Loading Stable Diffusion XL model...")
-pipe = StableDiffusionXLPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-xl-base-1.0",
-    torch_dtype=torch.float16,
-    use_safetensors=True,
-    variant="fp16",
-    token=HF_TOKEN
-)
+# Don't load model at startup - load it inside the GPU function
+pipe = None
 
 def grok_text(prompt, max_tokens=400):
     """Call Grok for text generation"""
@@ -116,6 +109,19 @@ Format as numbered list:
 @spaces.GPU
 def generate_image_sdxl(prompt):
     """Generate image using Stable Diffusion XL on Hugging Face GPU"""
+    global pipe
+    
+    # Load model on first use (inside GPU context)
+    if pipe is None:
+        print("Loading SDXL model...")
+        pipe = StableDiffusionXLPipeline.from_pretrained(
+            "stabilityai/stable-diffusion-xl-base-1.0",
+            torch_dtype=torch.float16,
+            use_safetensors=True,
+            variant="fp16",
+            token=HF_TOKEN
+        ).to("cuda")
+    
     try:
         # Generate image
         image = pipe(

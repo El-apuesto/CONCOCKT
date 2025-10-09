@@ -1,5 +1,4 @@
-
-    import gradio as gr
+import gradio as gr
 from gtts import gTTS
 from PIL import Image
 import io

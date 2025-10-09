@@ -20,8 +20,23 @@ if not XAI_API_KEY:
 if not HF_TOKEN:
     raise ValueError("HF_TOKEN not found! Add it to environment/secrets.")
 
-# Don't load model at startup - load it inside the GPU function
+# Global variable for lazy loading
 pipe = None
+
+def load_model():
+    """Lazy load the model only when needed"""
+    global pipe
+    if pipe is None:
+        print("🔄 Loading Stable Diffusion XL model...")
+        pipe = StableDiffusionXLPipeline.from_pretrained(
+            "stabilityai/stable-diffusion-xl-base-1.0",
+            torch_dtype=torch.float16,
+            use_safetensors=True,
+            variant="fp16",
+            token=HF_TOKEN
+        )
+        print("✅ Model loaded!")
+    return pipe
 
 def grok_text(prompt, max_tokens=400):
     """Call Grok for text generation"""
@@ -109,22 +124,12 @@ Format as numbered list:
 @spaces.GPU
 def generate_image_sdxl(prompt):
     """Generate image using Stable Diffusion XL on Hugging Face GPU"""
-    global pipe
-    
-    # Load model on first use (inside GPU context)
-    if pipe is None:
-        print("Loading SDXL model...")
-        pipe = StableDiffusionXLPipeline.from_pretrained(
-            "stabilityai/stable-diffusion-xl-base-1.0",
-            torch_dtype=torch.float16,
-            use_safetensors=True,
-            variant="fp16",
-            token=HF_TOKEN
-        ).to("cuda")
-    
     try:
-        # Generate image
-        image = pipe(
+        # Load model if not already loaded
+        model = load_model()
+        
+        # Move to GPU (ZeroGPU handles this automatically)
+        image = model(
             prompt=prompt,
             negative_prompt="ugly, blurry, low quality, distorted, deformed",
             num_inference_steps=30,
@@ -160,11 +165,9 @@ def apply_ken_burns(clip, zoom_direction="in"):
     duration = clip.duration
     
     if zoom_direction == "in":
-        # Zoom in while panning
         zoom_effect = lambda t: 1 + 0.3 * (t / duration)
         pan_effect = lambda t: ('center', int(50 * (t / duration)))
     else:
-        # Zoom out while panning
         zoom_effect = lambda t: 1.3 - 0.3 * (t / duration)
         pan_effect = lambda t: ('center', int(50 - 50 * (t / duration)))
     
@@ -329,35 +332,35 @@ def pipeline(theme, num_scenes=4, seconds_per_scene=5, progress=gr.Progress()):
     """Main pipeline with progress tracking - generates BOTH aspect ratios"""
     try:
         # Step 1: Generate narration
-        progress(0.1, desc="Generating narration with Grok...")
+        progress(0.1, desc="🎤 Generating narration with Grok...")
         narration = generate_narration(theme)
         if not narration:
             return "Narration generation failed", "", None, None, None
         
         # Step 2: Extract visual prompts
-        progress(0.2, desc="Extracting visual prompts...")
+        progress(0.2, desc="🎬 Extracting visual prompts...")
         prompts = get_visual_prompts(narration, num_scenes)
         
         # Step 3: Generate images with SDXL
         images = []
         for i, prompt in enumerate(prompts):
-            progress(0.3 + (i / num_scenes) * 0.4, desc=f"Generating image {i+1}/{num_scenes} with SDXL...")
+            progress(0.3 + (i / num_scenes) * 0.4, desc=f"🎨 Generating image {i+1}/{num_scenes} with SDXL...")
             img = generate_image_sdxl(prompt)
             images.append(img)
         
         # Step 4: Create script
-        progress(0.75, desc="Formatting script...")
+        progress(0.75, desc="📝 Formatting script...")
         script = make_script(narration, prompts)
         
         # Step 5: Generate audio
-        progress(0.8, desc="Creating voiceover...")
+        progress(0.8, desc="🔊 Creating voiceover...")
         audio_path = make_audio(narration)
         
         # Step 6: Render BOTH videos (16:9 and 9:16)
-        progress(0.85, desc="Rendering videos (landscape + portrait)...")
+        progress(0.85, desc="🎥 Rendering videos (landscape + portrait)...")
         video_16_9, video_9_16 = make_video(narration, images, audio_path, seconds_per_scene)
         
-        progress(1.0, desc="Complete!")
+        progress(1.0, desc="✅ Complete!")
         
         return narration, script, video_16_9, video_9_16, audio_path
         
@@ -378,6 +381,7 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css="""
     .generate-btn {
         background: #ff4444 !important;
         font-size: 1.2em !important;
+        font-weight: bold !important;
     }
 """) as demo:
     
@@ -441,7 +445,7 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css="""
     ### Setup:
     Add to HF Space Secrets:
     - `XAI_API_KEY` - Your Grok API key
-    - `HF_TOKEN` - Your Hugging Face token (for downloading SDXL model)
+    - `HF_TOKEN` - Your Hugging Face token
     
     ### Hardware:
     Make sure your Space is set to **ZeroGPU** in Settings → Hardware
@@ -454,3 +458,4 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css="""
     )
 
 if __name__ == "__main__":
+    demo.launch()
